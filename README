@@ -1,17 +1,28 @@
 P-HOTPANTS
 ==========
 
-we accelerate the online-available image subtraction package "HOTPANTS" on one GPU and one CPU, and try our best to achieve the best performance. 
-
+Main contribution
 
 we accelerate the online-available image subtraction package "HOTPANTS" (http://www.astro.washington.edu/users/becker/v2.0/c_software.html) on one GPU and one CPU, and try our best to achieve the best performance. 
 
 In P-HOTPANTS, we use GPU to conduct most computation and CPU to check or make decisions. In the most time-consuming part, Convolving, we use both CPU and GPU and achieve an overall 4 times speedup on a desktop with an Intel i7 CPU and an NVIDIA GTX580 GPU.
 
-We focus on image subtraction procedure and remove extractkern.c, extractkernOnes.c and maskim.c.
+We focus on image subtraction procedure, thus remove extractkern.c, extractkernOnes.c and maskim.c in the orignial source files.
 
+==========
+
+File description
+
+gpu_kernel.cu contains several computation-intensified functions, originally located in alard.c. 
+Both GPU kernel and GPU memory allocation can be found in gpu_kernel.cu. 
+The part in functions.c is more related to checking and turning. 
+main.c controls the entire program, i.e. Input, Filling, Checking, Convolving and Output five steps. 
+Global variables for .c and .cu files is in global.h and gforg.h, respectively.
+
+==========
 
 Compile
+
 Both HOTPANTS and P-HOTPANTS were developed on Linux. Other operating systems may
 require minor changes to the source code. Synthetic image is not recommended for inputs.
 
@@ -19,6 +30,7 @@ Modify the CFITIOS and CUTIL direction in MAKEFILE before conduct “make”.
 
 Modify the GPU-PART parameter in gpu_kernel.cu to set the ratio of GPU workload in Convolving.
 
+==========
 
 Sample
 
@@ -30,15 +42,18 @@ or
 
 ./hotpants -inim input_1K.fit -tmplim templ_1K.fit -outim resd_1K.fit -v 0
 
+==========
 
 Citation
 
 Yan Zhao, Qiong Luo, Senhong Wang, Chao Wu, 
 Accelerating Astronomical Image Subtraction on Heterogeneous Processors
 
+==========
+
 Contact
 
-P-HOTPANTS  was mainly written by Yan Zhao.
+The program on GPU in P-HOTPANTS  was mainly written by Yan Zhao. It is strongly recommended to install the serail version first before this progect.
 
 For bug-fixes, feedback please contact:
 zhaoyan1555@gmail.com
