@@ -1,61 +1,45 @@
 P-HOTPANTS
+
 ==========
 
 Main contribution
 
-we accelerate the online-available image subtraction package "HOTPANTS" (http://www.astro.washington.edu/users/becker/v2.0/c_software.html) on one GPU and one CPU, and try our best to achieve the best performance. 
+We propose to utilize both the multicore CPUs and the many-core GPUs to parallelize the computation of astronomic image subtraction. Our work is based on the online-available image-subtraction package, “HIGH ORDER TRANSFORM OF PSF AND TEMPLATE SUBTRACTION” from http://www.astro.washington.edu/users/becker/v2.0/c_software.html.
 
-In P-HOTPANTS, we use GPU to conduct most computation and CPU to check or make decisions. In the most time-consuming part, Convolving, we use both CPU and GPU and achieve an overall 4 times speedup on a desktop with an Intel i7 CPU and an NVIDIA GTX580 GPU.
+For illustration propose, we divide the original programs into five steps- Initialization, Filling, Checking, Convolving and Output, and provide partial executional time at the end of each step. Generally, we use the GPU to perform numerical computation and the CPU to check or make decisions. For the most time-consuming part, Convolving, we fully harveste the horsepower of the heterogenous processors. With careful turning and work partitioning, we achieve an overall 4 times speedup over the sequential version on a desktop with an Intel i7 CPU and an NVIDIA GTX580 GPU.
 
-We focus on image subtraction procedure, thus remove extractkern.c, extractkernOnes.c and maskim.c in the orignial source files.
+We focus on image subtraction procedure, thus removing extractkern.c, extractkernOnes.c and maskim.c in the original source files.
+
 
 ==========
 
 File description
 
-gpu_kernel.cu contains several computation-intensified functions, originally located in alard.c. 
-Both GPU kernel and GPU memory allocation can be found in gpu_kernel.cu. 
-The part in functions.c is more related to checking and turning. 
-main.c controls the entire program, i.e. Input, Filling, Checking, Convolving and Output five steps. 
-Global variables for .c and .cu files is in global.h and gforg.h, respectively.
+main.c controls the entire program, i.e., Input, Filling, Checking, Convolving and Output five steps. At the end of each step, the execution time is outputted. 
+gpu_kernel.cu contains several computation-intensified functions, originally located in alard.c. Both GPU kernel and GPU memory allocation can be found in gpu_kernel.cu. 
+functions.c has the functions that relate to checking and turning. 
+Global variables for .c and .cu files are in global.h and gforg.h, respectively.
 
 ==========
 
 Compile
 
-Both HOTPANTS and P-HOTPANTS were developed on Linux. Other operating systems may
-require minor changes to the source code. Synthetic image is not recommended for inputs.
+Both HOTPANTS and P-HOTPANTS were developed on Linux. Other operating systems may require minor changes to the source code. Synthetic image is not recommended for inputs.
+
+Modify the GPU-PART parameter in gpu_kernel.cu to set the ratio of GPU workload in Convolving.
 
 Modify the CFITIOS and CUTIL direction in MAKEFILE before conduct “make”.
 
-Modify the GPU-PART parameter in gpu_kernel.cu to set the ratio of GPU workload in Convolving.
 
 ==========
 
 Sample
 
-we provide one 1K x 1K and one 3K x 3K image are input, please use the following commands:
+We provide one pair of 1K x 1K images and one pair of 3K x 3K images as input, please use the following commands:
 
 ./hotpants -inim input_3K.fit -tmplim templ_3K.fit -outim resd_3K.fit -v 0
 
 or 
 
 ./hotpants -inim input_1K.fit -tmplim templ_1K.fit -outim resd_1K.fit -v 0
-
-==========
-
-Citation
-
-Yan Zhao, Qiong Luo, Senhong Wang, Chao Wu, 
-Accelerating Astronomical Image Subtraction on Heterogeneous Processors
-
-==========
-
-Contact
-
-The program on GPU in P-HOTPANTS  was mainly written by Yan Zhao. It is strongly recommended to install the serail version first before this progect.
-
-For bug-fixes, feedback please contact:
-zhaoyan1555@gmail.com
- 
 
