@@ -1,15 +1,18 @@
-#include"gforg.h"
-#include"defaults.h"
 #include<stdio.h>
 #include<math.h>
 #include<cutil.h>
 #include<cutil_math.h>
 #include<cutil_inline.h>
 #include<omp.h>
-#define GPU_PART 0.7
+#include"gforg.h"
+#include"defaults.h"
+
+#define GPU_PART 0.7 //GPU working ratio in Convolving
 #define SIZE 1024
 #define mats 53
 #define WARPS 32
+
+/* functions in alard.c or functions.c */
 extern "C" double      get_background(int, int, double *);
 extern "C" int         cutSStamp(stamp_struct *, float *);
 extern "C" double      make_kernel(int, int, double *);
@@ -38,32 +41,28 @@ extern "C" void startgpu(){
 
 
 extern "C" void allocateStamps( stamp_struct *stamps, double **vectors, double **mat, double **scprod, double **KerSol, int nStamps) {                                                                     
-         int i;
-         mat_size   = (nCompKer-1) * nComp + nBGVectors + 1;
-	 /* **************************** */
+   int i;
+   mat_size   = (nCompKer-1) * nComp + nBGVectors + 1;
+	 /* allocating memory on GPU */
 	 CUDA_SAFE_CALL( cudaMalloc(vectors, sizeof(double)*(nCompKer + nBGVectors) * SIZE * nStamps));
-	 
-	 /* **************************** */
-	  CUDA_SAFE_CALL( cudaMalloc(mat, sizeof(double)*mats*mats*nStamps));
-	 
-	 /* **************************** */
-	
-	  CUDA_SAFE_CALL( cudaMalloc(scprod, sizeof(double)*mats*nStamps));
-	 /* **************************** */
-	
-	  CUDA_SAFE_CALL( cudaMalloc(KerSol, sizeof(double)*(nCompTotal+1)));
 
+   CUDA_SAFE_CALL( cudaMalloc(mat, sizeof(double)*mats*mats*nStamps));
+	 	
+	 CUDA_SAFE_CALL( cudaMalloc(scprod, sizeof(double)*mats*nStamps));
+
+	 CUDA_SAFE_CALL( cudaMalloc(KerSol, sizeof(double)*(nCompTotal+1)));
+   /* Initialization */
 	 for (i = 0; i < nStamps; i++) {
-		stamps[i].x0 = stamps[i].y0 = stamps[i].x = stamps[i].y = 0;
-		stamps[i].nss = stamps[i].sscnt = 0;
-		stamps[i].nx = stamps[i].ny = 0;
-		stamps[i].sum = stamps[i].mean = stamps[i].median = 0;
-		stamps[i].mode = stamps[i].sd = stamps[i].fwhm = 0;
-		stamps[i].lfwhm = stamps[i].chi2 = 0;
-		stamps[i].norm = stamps[i].diff = 0;
-		stamps[i].xss = (int *)calloc(nKSStamps, sizeof(int));
-		stamps[i].yss = (int *)calloc(nKSStamps, sizeof(int));
-		stamps[i].krefArea  = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double));
+   		stamps[i].x0 = stamps[i].y0 = stamps[i].x = stamps[i].y = 0;
+	  	stamps[i].nss = stamps[i].sscnt = 0;
+		  stamps[i].nx = stamps[i].ny = 0;
+	  	stamps[i].sum = stamps[i].mean = stamps[i].median = 0;
+		  stamps[i].mode = stamps[i].sd = stamps[i].fwhm = 0;
+		  stamps[i].lfwhm = stamps[i].chi2 = 0;
+  		stamps[i].norm = stamps[i].diff = 0;
+  		stamps[i].xss = (int *)calloc(nKSStamps, sizeof(int));
+	  	stamps[i].yss = (int *)calloc(nKSStamps, sizeof(int));
+		  stamps[i].krefArea  = (double *)calloc(fwKSStamp*fwKSStamp, sizeof(double));
    }
 
    return;
@@ -163,7 +162,6 @@ void filter(double * filter_x, double * filter_y, int *ren, int n, int deg_x, in
 
 __global__
 void  kernel_vector(double *filter_x, double *filter_y,double *kernel_vec, int fwKernel) {  
-
   kernel_vec[threadIdx.x + fwKernel * threadIdx.y + blockIdx.x * SIZE] = filter_x[threadIdx.x + blockIdx.x * fwKernel] * filter_y[threadIdx.y + blockIdx.x * fwKernel]; 
 }
 
@@ -223,8 +221,6 @@ extern "C" void getKernelVec() {
    
    kernel_vector<<<nCompKer, threads>>>(dfilter_x, dfilter_y, dkernel_vec, fwKernel);
     
-     
-
    kernel_vector_fix<<<nCompKer,fwKernel*fwKernel>>>(dren, dkernel_vec, fwKernel);
      
    cudaFree(dig);
@@ -260,52 +256,57 @@ __global__ void gxy_conv_stamp1(float *dtemp, double *dfilter_y, float *dimage, 
 
 
    if(blockIdx.x%4==0){
-	image[threadIdx.y][threadIdx.x]=dimage[ threadIdx.y + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel)];
-   if(( threadIdx.y + xi - hwKSStamp - hwKernel) <rPixX && (threadIdx.x+yi+blockDim.y-hwKSStamp-hwKernel) <rPixX)
-	image[threadIdx.y][threadIdx.x+blockDim.x]=dimage[ threadIdx.y + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel+blockDim.x)];
-   __syncthreads();
-       for(yc = -hwKernel; yc <= hwKernel; yc++) {
+	    image[threadIdx.y][threadIdx.x]=dimage[ threadIdx.y + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel)];
+
+      if(( threadIdx.y + xi - hwKSStamp - hwKernel) <rPixX && (threadIdx.x+yi+blockDim.y-hwKSStamp-hwKernel) <rPixX)
+	       image[threadIdx.y][threadIdx.x+blockDim.x]=dimage[ threadIdx.y + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel+blockDim.x)];
+      __syncthreads();
+
+      for(yc = -hwKernel; yc <= hwKernel; yc++) {
 	       imc +=image[ threadIdx.y ][threadIdx.x+hwKernel+yc] * filter_y[hwKernel-yc];
+      }
+      dtemp[threadIdx.y + threadIdx.x*(fwKSStamp+fwKernel)+n*2*SIZE]= imc ;
    }
 
-
-   dtemp[threadIdx.y + threadIdx.x*(fwKSStamp+fwKernel)+n*2*SIZE]= imc ;
-   }
    if(blockIdx.x%4==1){
-        image[threadIdx.y][threadIdx.x]=dimage[ threadIdx.y +blockDim.y+ xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel)];
-   if(( threadIdx.y +blockDim.y+ xi - hwKSStamp - hwKernel) <rPixX && (threadIdx.x+yi+blockDim.y-hwKSStamp-hwKernel) <rPixX)
-	image[threadIdx.y][threadIdx.x+blockDim.x]=dimage[ threadIdx.y+blockDim.y + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel+blockDim.x)];
-   __syncthreads();
-       for(yc = -hwKernel; yc <= hwKernel; yc++) {
+      image[threadIdx.y][threadIdx.x]=dimage[ threadIdx.y +blockDim.y+ xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel)];
+
+      if(( threadIdx.y +blockDim.y+ xi - hwKSStamp - hwKernel) <rPixX && (threadIdx.x+yi+blockDim.y-hwKSStamp-hwKernel) <rPixX)
+     	  image[threadIdx.y][threadIdx.x+blockDim.x]=dimage[ threadIdx.y+blockDim.y + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel+blockDim.x)];
+      __syncthreads();
+
+      for(yc = -hwKernel; yc <= hwKernel; yc++) {
 	       imc +=image[ threadIdx.y ][threadIdx.x+hwKernel+yc] * filter_y[hwKernel-yc];
-   }
+      }
  
-       dtemp[threadIdx.y + blockDim.y+threadIdx.x*(fwKSStamp+fwKernel)+n*2*SIZE]= imc ;
-   }
+      dtemp[threadIdx.y + blockDim.y+threadIdx.x*(fwKSStamp+fwKernel)+n*2*SIZE]= imc ;
+  }
+
    if(blockIdx.x%4==2){
-        image[threadIdx.y][threadIdx.x]=dimage[ threadIdx.y + blockDim.y *2 + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel)];
-   if(( threadIdx.y +blockDim.y *2+ xi - hwKSStamp - hwKernel) <rPixX && (threadIdx.x+yi+blockDim.y-hwKSStamp-hwKernel) <rPixX)
-	image[threadIdx.y][threadIdx.x+blockDim.x]=dimage[ threadIdx.y+blockDim.y *2 + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel+blockDim.x)];
-   __syncthreads();
-       for(yc = -hwKernel; yc <= hwKernel; yc++) {
+      image[threadIdx.y][threadIdx.x]=dimage[ threadIdx.y + blockDim.y *2 + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel)];
+      if(( threadIdx.y +blockDim.y *2+ xi - hwKSStamp - hwKernel) <rPixX && (threadIdx.x+yi+blockDim.y-hwKSStamp-hwKernel) <rPixX)
+	       image[threadIdx.y][threadIdx.x+blockDim.x]=dimage[ threadIdx.y+blockDim.y *2 + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel+blockDim.x)];
+      __syncthreads();
+
+      for(yc = -hwKernel; yc <= hwKernel; yc++) {
 	       imc +=image[ threadIdx.y ][threadIdx.x+hwKernel+yc] * filter_y[hwKernel-yc];
-   }
+      }
 
  
-       dtemp[threadIdx.y + blockDim.y *2+threadIdx.x*(fwKSStamp+fwKernel)+n*2*SIZE]= imc ;
+      dtemp[threadIdx.y + blockDim.y *2+threadIdx.x*(fwKSStamp+fwKernel)+n*2*SIZE]= imc ;
    }
+
    if(blockIdx.x%4==3){
-        image[threadIdx.y][threadIdx.x]=dimage[ threadIdx.y +blockDim.y *3+ xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel)];
-   if(( threadIdx.y +blockDim.y *3+ xi - hwKSStamp - hwKernel) <rPixX && (threadIdx.x+yi+blockDim.y-hwKSStamp-hwKernel) <rPixX)
-	image[threadIdx.y][threadIdx.x+blockDim.x]=dimage[ threadIdx.y+blockDim.y *3 + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel+blockDim.x)];
-   __syncthreads();
-       for(yc = -hwKernel; yc <= hwKernel; yc++) {
+      image[threadIdx.y][threadIdx.x]=dimage[ threadIdx.y +blockDim.y *3+ xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel)];
+      if(( threadIdx.y +blockDim.y *3+ xi - hwKSStamp - hwKernel) <rPixX && (threadIdx.x+yi+blockDim.y-hwKSStamp-hwKernel) <rPixX)
+	       image[threadIdx.y][threadIdx.x+blockDim.x]=dimage[ threadIdx.y+blockDim.y *3 + xi - hwKSStamp - hwKernel+rPixX*(threadIdx.x+yi-hwKSStamp-hwKernel+blockDim.x)];
+      __syncthreads();
+      for(yc = -hwKernel; yc <= hwKernel; yc++) {
 	       imc +=image[ threadIdx.y ][threadIdx.x+hwKernel+yc] * filter_y[hwKernel-yc];
-   }
+      }
 
- 
-       dtemp[threadIdx.y + blockDim.y *3+threadIdx.x*(fwKSStamp+fwKernel)+n*2*SIZE]= imc ;
-   }
+      dtemp[threadIdx.y + blockDim.y *3+threadIdx.x*(fwKSStamp+fwKernel)+n*2*SIZE]= imc ;
+  }
 }
 
 
@@ -317,12 +318,12 @@ __global__ void gxy_conv_stamp2(double *vectors, float *dtemp, double *filter_x,
    int xc;
    imc=0.0;
    
-       for(xc = -hwKernel; xc <= hwKernel; xc++) {
+  for(xc = -hwKernel; xc <= hwKernel; xc++) {
 	 
 	   imc +=(double)dtemp[ threadIdx.x +xc+hwKernel+ threadIdx.y*(fwKSStamp+fwKernel)+2*SIZE*(blockIdx.x + blockIdx.y * gridDim.x)] * filter_x[hwKernel-xc+(blockIdx.x)*fwKernel];
-       } 
+  } 
   
-       vectors[threadIdx.x + threadIdx.y*fwKSStamp +n* SIZE]= imc ;
+  vectors[threadIdx.x + threadIdx.y * fwKSStamp + n * SIZE] = imc ;
    
 }
 
@@ -373,30 +374,31 @@ __global__ void build_matrix0(double *mat, double *vectors,int vsize, int half, 
 
  
    if(blockIdx.x % 3 == 0){
-	for(m=0; m<=pixStamp;m+=half) {
-                vec[vtotal]=vectors[ntotal+m];
-                __syncthreads();
+	     for(m=0; m<=pixStamp;m+=half) {
+           vec[vtotal]=vectors[ntotal+m];
+           __syncthreads();
 
-                for (k = 0; k < half ; k++)
-		     if(m+k<pixStamp)  
-	 	         q += vec[k * vsize + x] * vec[k * vsize + y];
-	       __syncthreads();
-	 }
-         mat[x+1+msize*(y+1)+n*msize*msize] = q;
+           for (k = 0; k < half ; k++)
+		          if(m+k<pixStamp)  
+	 	              q += vec[k * vsize + x] * vec[k * vsize + y];
+
+	         __syncthreads();
+	     }
+       mat[x+1+msize*(y+1)+n*msize*msize] = q;
 		
    }
 
    if(blockIdx.x % 3 == 1){
-         for(m=0; m<=pixStamp;m+=half) {
-                vec[vtotal]=vectors[ntotal+m];
-		vec[vtotal+half]=vectors[ntotal+m+half*SIZE];
-                __syncthreads();
+        for(m=0; m<=pixStamp;m+=half) {
+           vec[vtotal]=vectors[ntotal+m];
+		       vec[vtotal+half]=vectors[ntotal+m+half*SIZE];
+           __syncthreads();
 
-                for (k = 0; k < half ; k++)
-		     if(m+k<pixStamp)  
-	 	         q += vec[k * vsize + x+half] * vec[k * vsize + y];
-	       __syncthreads();
-	    }
+           for (k = 0; k < half ; k++)
+		          if(m+k<pixStamp)  
+	 	             q += vec[k * vsize + x+half] * vec[k * vsize + y];
+	         __syncthreads();
+	      }
         mat[x+1+half+msize*(y+1)+n*msize*msize] = q;		
         mat[y+1+msize*(x+1+half)+n*msize*msize] = q;		  
    }
@@ -404,15 +406,15 @@ __global__ void build_matrix0(double *mat, double *vectors,int vsize, int half, 
 
    if(blockIdx.x % 3 == 2){
        for(m=0; m<=pixStamp;m+=half) {
-                vec[vtotal]=vectors[ntotal+m+half*SIZE];
+           vec[vtotal]=vectors[ntotal+m+half*SIZE];
 		
-                __syncthreads();
+           __syncthreads();
 
-                for (k = 0; k < half ; k++)
-		     if(m+k<pixStamp)  
-	 	         q += vec[k * vsize + x] * vec[k * vsize + y];
-	       __syncthreads();
-	    }
+           for (k = 0; k < half ; k++)
+		          if(m+k<pixStamp)  
+	 	             q += vec[k * vsize + x] * vec[k * vsize + y];
+	         __syncthreads();
+	      }
         mat[x+1+half+msize*(y+1+half)+n*msize*msize] = q;	
   }
 }
@@ -460,7 +462,7 @@ __global__ void build_scprod0(double *scprod,double *vec, float *image, int *xst
       /* have gone through all the good substamps, reject this stamp */
       /*if (verbose >= 2) fprintf(stderr, "    ******** REJECT stamp (out of substamps)\n");*/
       if (verbose >= 1)
-	 fprintf(stderr, "        Reject stamp\n");
+	    fprintf(stderr, "        Reject stamp\n");
       return 1;
      }
     if (cutSStamp(&stamp[k], image))
@@ -476,12 +478,14 @@ __global__ void build_scprod0(double *scprod,double *vec, float *image, int *xst
     CUDA_SAFE_CALL( cudaMemset(scprod,0, sizeof(double)*nStamps*mats));
     CUDA_SAFE_CALL(cudaMemcpy(d_xstamp, xstamp, sizeof(int)*nStamps, cudaMemcpyHostToDevice));
     CUDA_SAFE_CALL(cudaMemcpy(d_ystamp, ystamp, sizeof(int)*nStamps, cudaMemcpyHostToDevice));
+
     dim3 thread2 (fwKSStamp,fwKSStamp);
     dim3 thread1(fwKSStamp, (fwKSStamp+fwKernel) * 0.25 );
     dim3 block1(nCompKer*4,nStamps);
     dim3 blocks(nCompKer,nStamps);
-    dim3 thread3 (vsize/2,vsize/2);
+    dim3 thread3  (vsize/2,vsize/2);
     dim3 block3(fwKSStamp, nStamps);
+
     gxy_conv_stamp1<<<block1, thread1,(fwKernel+62*13*0.5)*sizeof(double)>>>( dtemp, dfilter_y, imConv,  d_xstamp, d_ystamp,hwKSStamp, hwKernel, fwKSStamp, fwKernel,rPixX);
          
 
@@ -754,12 +758,12 @@ void getStampSig(stamp_struct *stamp, double * vectors, double *kernelSol, float
    double cSum, cMean, cMedian, cMode, cLfwhm;
    double *im, tdat, idat, ndat, diff, bg;
    //int vsize=(nCompKer+nbg_vec)*SIZE;
-   /* info */
+  
       CUDA_SAFE_CALL( cudaMemcpy(d_sflag, mystamp, sizeof(int)*flag, cudaMemcpyHostToDevice)); 
   
-   /* the comparison image */
+   
   
-   /* background from fit */
+   
    float *d_temp;
    CUDA_SAFE_CALL( cudaMalloc(&d_temp, sizeof(float)*nStamps*SIZE));
    CUDA_SAFE_CALL( cudaMemset(d_temp, 0, sizeof(float)*nStamps*SIZE));
@@ -969,8 +973,8 @@ __global__  void gbuild_matrix( double* wxy, double* matrix0,  double* matrix,in
 }
        
 __global__ void build_matrix_fit(double *d_matrix,int  msize){
-const int i=threadIdx.x;
-d_matrix[i+msize*i] = d_matrix[i+msize*i] * 0.5;
+    const int i=threadIdx.x;
+    d_matrix[i+msize*i] = d_matrix[i+msize*i] * 0.5;
 }
 
 __inline__ void build_matrix_first(stamp_struct *stamps, float *imRef, double *vectors, double *mat, double *scprod,int *goodstamps, int *xstamp, int *ystamp, int flag) {
@@ -982,8 +986,8 @@ __inline__ void build_matrix_first(stamp_struct *stamps, float *imRef, double *v
    
 
    for( i=0;i<flag;i++){
-	fx[i]=(xstamp[i] - rPixX2) / rPixX2;
-	fy[i]=(ystamp[i] - rPixY2) / rPixY2;
+	     fx[i]=(xstamp[i] - rPixX2) / rPixX2;
+	     fy[i]=(ystamp[i] - rPixY2) / rPixY2;
    }
   
    CUDA_SAFE_CALL(cudaMemcpy(d_fx, fx, sizeof(double)*flag, cudaMemcpyHostToDevice));
@@ -995,16 +999,11 @@ __inline__ void build_matrix_first(stamp_struct *stamps, float *imRef, double *v
    dim3 mgrid((mat_size+1)/32+1,(mat_size+1)/4+1);
    dim3 mblocks(32,(mat_size+1)/32+1);
    build_wxy<<<1,flag,0>>>( d_fx, d_fy, d_wxy, kerOrder, ncomp2, rPixX2, rPixY2);
-     
-    
-   //cudaFreeHost(fx);cudaFree(d_fx);  
-   //cudaFreeHost(fy);cudaFree(d_fy);  
+   
    CUDA_SAFE_CALL(cudaMemset(d_matrix, 0, sizeof(double)*(mat_size+1)*(mat_size+1)));
    CUDA_SAFE_CALL(cudaMemset(d_ksol, 0, sizeof(double)*(nCompTotal+1)));
  
    gbuild_matrix<<<mgrid,mblock>>>(  d_wxy, mat,  d_matrix, mat_size+1, goodstamps, flag, vsize, pixStamp, ncomp1, ncomp2, mats, fwKSStamp);
-     
-    
 
    build_matrix_fit<<<1,(mat_size+1)>>>(d_matrix, mat_size+1);
     
@@ -1041,6 +1040,7 @@ __global__ void one_conv_stamp1(float *dtemp, double *filter_y, float *image,  i
  
        dtemp[n*2*SIZE+threadIdx.x + blockDim.x+threadIdx.y*(fwKSStamp+fwKernel)]= imc ;
    }
+
    if(blockIdx.x%4==2){
        for(yc = -hwKernel; yc <= hwKernel; yc++) {
 	       imc +=image[ threadIdx.x + blockDim.x *2 + xi - hwKSStamp - hwKernel+rPixX *( threadIdx.y +yi+yc-hwKSStamp)] * filter_y[hwKernel-yc+n*fwKernel];
@@ -1049,6 +1049,7 @@ __global__ void one_conv_stamp1(float *dtemp, double *filter_y, float *image,  i
  
        dtemp[n*2*SIZE+threadIdx.x + blockDim.x *2+threadIdx.y*(fwKSStamp+fwKernel)]= imc ;
    }
+
    if(blockIdx.x%4==3){
        for(yc = -hwKernel; yc <= hwKernel; yc++) {
 	       imc +=image[ threadIdx.x + blockDim.x *3+ xi - hwKSStamp - hwKernel+rPixX *( threadIdx.y +yi+yc-hwKSStamp)] * filter_y[hwKernel-yc+ n*fwKernel];
@@ -1068,15 +1069,15 @@ __global__ void one_conv_stamp2(double *vectors, float *dtemp, double *filter_x,
    int xc;
    imc=0.0;
    
-       for(xc = -hwKernel; xc <= hwKernel; xc++) {
+   for(xc = -hwKernel; xc <= hwKernel; xc++) {
 	 
 	   imc += dtemp[ threadIdx.x +xc+hwKernel+ threadIdx.y*(fwKSStamp+fwKernel)+ blockIdx.x*2*SIZE ] * filter_x[hwKernel-xc+(blockIdx.x)*fwKernel];
 
-       } 
+   } 
     
    __syncthreads();
   
-       vectors[threadIdx.x + threadIdx.y*fwKSStamp +n* SIZE]= imc ;
+   vectors[threadIdx.x + threadIdx.y * fwKSStamp + n * SIZE]= imc ;
    
 }
 
@@ -1087,7 +1088,7 @@ __global__ void  one_vector_fix(int *ren ,double *vectors, int fwKSStamp,int ver
    double q;
    if(ren[m]==1){
       q= vectors[threadIdx.x+ l + (m+ istamp *versize)*SIZE] -vectors[threadIdx.x + l + istamp *versize*SIZE];
-      vectors[threadIdx.x+ l + (m+ istamp *versize)*SIZE]=q;
+      vectors[threadIdx.x + l + (m+  istamp * versize) * SIZE] = q;
    }
 }
 
@@ -1349,8 +1350,6 @@ int fillStamp_one(stamp_struct *stamp, double *vectors, double *mat, double *scp
     dim3 block3(fwKSStamp, 1);
     one_conv_stamp1<<< nCompKer*4 , thread1>>>( dtemp, dfilter_y, imConv, xs,ys, hwKSStamp, hwKernel, fwKSStamp, fwKernel,rPixX);
     
-      
-     
 
     one_conv_stamp2<<< nCompKer ,thread2 >>>(vectors, dtemp, dfilter_x, hwKernel, fwKSStamp, fwKernel ,vsize, istamp);
       
@@ -1359,8 +1358,6 @@ int fillStamp_one(stamp_struct *stamp, double *vectors, double *mat, double *scp
     
     one_vector_fix<<<block1 , SIZE * 0.25>>>( dren ,vectors, fwKSStamp, vsize, istamp);
       
-   
-
 
     /* get the krefArea data */
     /* fill stamp->vectors[nvec+++] with x^(bg) * y^(bg) for background fit*/
@@ -1605,14 +1602,14 @@ __global__ void convolve1(float* d_image,double* d_kernel, float* dcrdata ,int* 
                   uks += fabs(subkernel[2*hwKernel-i][2*hwKernel-j]);
               }
 	     
-		 }
+		      }
        }
 
     __syncthreads();
-        dcrdata[ tx + hwKernel + xSize * ( ty+hwKernel )] = q;
-	d_mRData[tx+hwKernel+xSize*(ty+hwKernel)]  |= cMask[tx+hwKernel+xSize*(ty+hwKernel)];
-           d_mRData[tx+hwKernel+xSize*(ty+hwKernel)]  |= 0x8000 * ((cMask[tx+hwKernel+xSize*(ty+hwKernel)] & 0x80) > 0);
-           if (mbit) {                                              
+    dcrdata[ tx + hwKernel + xSize * ( ty+hwKernel )] = q;
+	  d_mRData[tx+hwKernel+xSize*(ty+hwKernel)]  |= cMask[tx+hwKernel+xSize*(ty+hwKernel)];
+    d_mRData[tx+hwKernel+xSize*(ty+hwKernel)]  |= 0x8000 * ((cMask[tx+hwKernel+xSize*(ty+hwKernel)] & 0x80) > 0);
+    if (mbit) {                                              
                  if ((uks / aks) < kerFracMask) {
                        d_mRData[tx+hwKernel+xSize*(ty+hwKernel)] |= (0x8000 | 0x10);
                   }
@@ -1641,17 +1638,18 @@ __global__ void variance_1(float* d_image, float* d_variance, double* d_kernel, 
     __syncthreads();
 
     if((tx+hwKernel) <xSize && (ty+hwKernel) <ySize){ 
-	image[threadIdx.x][threadIdx.y]=d_image[tx + xSize * ty];
-	image[threadIdx.x+ kcStep][threadIdx.y]=d_image[tx + kcStep + xSize * ty];
-	image[threadIdx.x][threadIdx.y+ kcStep] = d_image[tx + xSize*(ty + kcStep)];
-	image[threadIdx.x+ kcStep][threadIdx.y+ kcStep] = d_image[tx+ kcStep + xSize*(ty + kcStep)];
+	     image[threadIdx.x][threadIdx.y]=d_image[tx + xSize * ty];
+	     image[threadIdx.x+ kcStep][threadIdx.y]=d_image[tx + kcStep + xSize * ty];
+	     image[threadIdx.x][threadIdx.y+ kcStep] = d_image[tx + xSize*(ty + kcStep)];
+	     image[threadIdx.x+ kcStep][threadIdx.y+ kcStep] = d_image[tx+ kcStep + xSize*(ty + kcStep)];
 
-	vari[threadIdx.x][threadIdx.y]=d_variance[tx + xSize * ty];
-	vari[threadIdx.x+ kcStep][threadIdx.y]=d_variance[tx + kcStep + xSize * ty];
-	vari[threadIdx.x][threadIdx.y+ kcStep] = d_variance[tx + xSize*(ty + kcStep)];
-	vari[threadIdx.x+ kcStep][threadIdx.y+ kcStep] = d_variance[tx+ kcStep + xSize*(ty + kcStep)];	
-	__syncthreads();
+	     vari[threadIdx.x][threadIdx.y]=d_variance[tx + xSize * ty];
+	     vari[threadIdx.x+ kcStep][threadIdx.y]=d_variance[tx + kcStep + xSize * ty];
+	     vari[threadIdx.x][threadIdx.y+ kcStep] = d_variance[tx + xSize*(ty + kcStep)];
+	     vari[threadIdx.x+ kcStep][threadIdx.y+ kcStep] = d_variance[tx+ kcStep + xSize*(ty + kcStep)];	
+	     __syncthreads();
     }
+
     if((tx + 2 * hwKernel)<xSize && (ty + 2 * hwKernel)<ySize){ 
             for(int i = 0; i <=2*hwKernel; i ++) {
                  for(int j = 0; j <= 2*hwKernel; j ++) {
@@ -1666,10 +1664,10 @@ __global__ void variance_1(float* d_image, float* d_variance, double* d_kernel, 
 	     }
 
 
-	__syncthreads();
-        dcrdata[ tx + hwKernel + xSize * ( ty+hwKernel )] = q;
-	d_mRData[tx+hwKernel+xSize*(ty+hwKernel)]  |= cMask[tx+hwKernel+xSize*(ty+hwKernel)];
-        d_mRData[tx+hwKernel+xSize*(ty+hwKernel)]  |= 0x8000 * ((cMask[tx+hwKernel+xSize*(ty+hwKernel)] & 0x80) > 0);
+	  __syncthreads();
+    dcrdata[ tx + hwKernel + xSize * ( ty+hwKernel )] = q;
+	  d_mRData[tx+hwKernel+xSize*(ty+hwKernel)]  |= cMask[tx+hwKernel+xSize*(ty+hwKernel)];
+    d_mRData[tx+hwKernel+xSize*(ty+hwKernel)]  |= 0x8000 * ((cMask[tx+hwKernel+xSize*(ty+hwKernel)] & 0x80) > 0);
            if (mbit) {                                              
                  if ((uks / aks) < kerFracMask) {
                        d_mRData[tx+hwKernel+xSize*(ty+hwKernel)] |= (0x8000 | 0x10);
@@ -1708,43 +1706,44 @@ __global__ void variance_2(double * kernel_vec, float* d_image, float* variance,
   if(threadIdx.x<nCompKer)
       kercoe[threadIdx.x]=d_kercoe[threadIdx.x+(blockIdx.x+blockIdx.y*gridDim.x)*nCompKer];
        
-  __syncthreads();
-  for (i = 0; i < nCompKer; i++) {
+      __syncthreads();
+      for (i = 0; i < nCompKer; i++) {
 
         q += kercoe[i] * kernel_vec[i * SIZE + threadIdx.x];  //make_kernel2
-  }
-    subkernel[threadIdx.x]=q;
-    double_subker[threadIdx.x]=q*q; 
+      }
+      subkernel[threadIdx.x]=q;
+      double_subker[threadIdx.x]=q*q; 
 
-    if((x+ blockIdx.x *kcStep ) <xSize ){ //initialize
-temp=total+kcStep*xSize;
-	image[fx]=d_image[total];
-	image[fx + 2*fwKernel* kcStep] = d_image[temp];
+      if((x+ blockIdx.x *kcStep ) <xSize ){ //initialize
+        temp=total+kcStep*xSize;
+	      image[fx]=d_image[total];
+	      image[fx + 2*fwKernel* kcStep] = d_image[temp];
 
-	var[fx]=variance[total];
+	      var[fx]=variance[total];
         var[fx + 2*fwKernel* kcStep] = variance[temp];
 
-	cMask[fx]=d_cMask[total];
-	cMask[fx + 2*fwKernel* kcStep] = d_cMask[temp];
-    }
-    if((x+ blockIdx.x *kcStep ) <xSize ){ //initialize
-temp=total+kcStep*xSize+kcStep;
-	image[fx+ kcStep] =d_image[total + kcStep ];	
-	image[fx + kcStep + 2*fwKernel* kcStep] = d_image[temp];
+	      cMask[fx]=d_cMask[total];
+	      cMask[fx + 2*fwKernel* kcStep] = d_cMask[temp];
+      }
+
+      if((x+ blockIdx.x *kcStep ) <xSize ){ //initialize
+        temp=total+kcStep*xSize+kcStep;
+      	image[fx+ kcStep] =d_image[total + kcStep ];	
+	      image[fx + kcStep + 2*fwKernel* kcStep] = d_image[temp];
 
         var[fx+ kcStep] =variance[total + kcStep ];
         var[fx + kcStep + 2*fwKernel* kcStep] = variance[temp];
 
-	cMask[fx+ kcStep] =d_cMask[total + kcStep ];	
-	cMask[fx + kcStep + 2*fwKernel* kcStep] = d_cMask[temp];
-    }
-q=0.0;
-	__syncthreads();
+      	cMask[fx+ kcStep] =d_cMask[total + kcStep ];	
+      	cMask[fx + kcStep + 2*fwKernel* kcStep] = d_cMask[temp];
+      }
+      q=0.0;
+	    __syncthreads();
 
 
-    if((x+ blockIdx.x *kcStep + 2 * hwKernel)<xSize ){ //compute
+      if((x+ blockIdx.x *kcStep + 2 * hwKernel)<xSize ){ //compute
             for(i = 0; i <=2*hwKernel; i ++) {
-temp=square-1-i;
+                 temp=square-1-i;
                  for(j = 0; j <= 2*hwKernel; j ++) {
                      temp_ker = subkernel[temp-fwKernel*j];
                       q += image[fx+i+j*fwKernel*2]*temp_ker;
@@ -1763,7 +1762,7 @@ temp=square-1-i;
 
  //return result
         dcrdata[ total + hwKernel + xSize * ( hwKernel )] = q;
-	temp_mRData  |= cMask[fx+ hwKernel + 2* fwKernel * ( hwKernel )];
+	      temp_mRData  |= cMask[fx+ hwKernel + 2* fwKernel * ( hwKernel )];
         temp_mRData  |= 0x8000 * ((cMask[ fx + hwKernel + 2*fwKernel * hwKernel ] & 0x80) > 0);
            if (mbit) {                                              
                  if ((uks / aks) < kerFracMask) {
@@ -1773,7 +1772,7 @@ temp=square-1-i;
 	               temp_mRData |= 0x40;
                   }    
 	       }
-	d_mRData[total + hwKernel + xSize * ( hwKernel )] |= temp_mRData;
+	      d_mRData[total + hwKernel + xSize * ( hwKernel )] |= temp_mRData;
         d_vData[total + hwKernel + xSize * ( hwKernel )]=qv;
 
 	}
@@ -1904,10 +1903,11 @@ cudaFree(d_fx); cudaFree(d_fy);
    CUDA_SAFE_CALL(cudaMemset(d_kernel, 0, sizeof(double) * SIZE * nsteps_x * gpupart));
 
    CUDA_SAFE_CALL( cudaMallocHost(kernel_sol, sizeof(double)*(nCompTotal+1)));
-    CUDA_SAFE_CALL( cudaMemcpy(*kernel_sol, d_kersol, sizeof(double)*(nCompTotal+1),  cudaMemcpyDeviceToHost));
+   CUDA_SAFE_CALL( cudaMemcpy(*kernel_sol, d_kersol, sizeof(double)*(nCompTotal+1),  cudaMemcpyDeviceToHost));
 
-     float * d_variance, * dcrdata, * d_vData;
-     int *d_cMask ;   int * d_mRdata; 
+   float * d_variance, * dcrdata, * d_vData;
+   int *d_cMask ;   
+   int * d_mRdata; 
   
 
    CUDA_SAFE_CALL(cudaMalloc(&dcrdata, sizeof(float)*xSize*(gpupart+1)*kcStep));
@@ -1920,11 +1920,11 @@ cudaFree(d_fx); cudaFree(d_fy);
 
    CUDA_SAFE_CALL( cudaMalloc(&d_cMask, sizeof(int)*xSize*ySize));
    CUDA_SAFE_CALL(  cudaMemcpy(d_cMask, cMask, sizeof(int)*xSize*ySize, cudaMemcpyHostToDevice));
-if (dovar) { 
-    cudaMalloc(&d_vData, sizeof(float)*xSize*ySize);
-    cudaMemset(d_vData,0, sizeof(float)*xSize*ySize);
-    cudaMalloc(&d_variance, sizeof(float)*xSize*ySize);
-    cudaMemcpy(d_variance, var, sizeof(float)*xSize*ySize, cudaMemcpyHostToDevice);
+   if (dovar) { 
+      cudaMalloc(&d_vData, sizeof(float)*xSize*ySize);
+      cudaMemset(d_vData,0, sizeof(float)*xSize*ySize);
+      cudaMalloc(&d_variance, sizeof(float)*xSize*ySize);
+      cudaMemcpy(d_variance, var, sizeof(float)*xSize*ySize, cudaMemcpyHostToDevice);
     }
    dim3 blocks(nsteps_x, nsteps_y);
    dim3 blocks_gpu(nsteps_x, gpupart);
@@ -1935,11 +1935,11 @@ if (dovar) {
     
    if (dovar) { 
 
-    if (convolveVariance) 
-	variance_1<<<blocks,threads,5*sizeof(double)*fwKernel*fwKernel>>>( d_image, d_variance, d_kernel, dcrdata ,  d_cMask, d_mRdata, d_vData, kcStep, hwKernel, xSize, ySize, nsteps_x, kerFracMask) ;
+      if (convolveVariance) 
+	       variance_1<<<blocks,threads,5*sizeof(double)*fwKernel*fwKernel>>>( d_image, d_variance, d_kernel, dcrdata ,  d_cMask, d_mRdata, d_vData, kcStep, hwKernel, xSize, ySize, nsteps_x, kerFracMask) ;
     
     else
-	variance_2<<<blocks_gpu, fwKernel*fwKernel,sizeof(double)*(nCompKer+8*fwKernel*fwKernel)>>>( dkernel_vec, d_image, d_variance, d_kercoe, nCompKer, dcrdata ,  d_cMask, d_mRdata, d_vData, kcStep, hwKernel, xSize, ySize, fwKernel, nsteps_x, kerFracMask) ;
+	       variance_2<<<blocks_gpu, fwKernel*fwKernel,sizeof(double)*(nCompKer+8*fwKernel*fwKernel)>>>( dkernel_vec, d_image, d_variance, d_kercoe, nCompKer, dcrdata ,  d_cMask, d_mRdata, d_vData, kcStep, hwKernel, xSize, ySize, fwKernel, nsteps_x, kerFracMask) ;
     
    
     }else{
@@ -1950,7 +1950,8 @@ if (dovar) {
 
     int ncompBG = (nCompKer - 1) * ( ((kerOrder + 1) * (kerOrder + 2)) / 2 ) + 1;
    
-   get_back<<<blocks_gpu,fwKernel*fwKernel,sizeof(double)*(fwKernel*fwKernel+4)>>>(dcrdata, d_kersol, kcStep, rPixX, rPixY, hwKernel,  ncompBG, bgOrder);   
+   get_back<<<blocks_gpu,fwKernel*fwKernel,sizeof(double)*(fwKernel*fwKernel+4)>>>(dcrdata, d_kersol, kcStep, rPixX, rPixY, hwKernel,  ncompBG, bgOrder);  
+
          for (j1 = gpupart-1; j1 < nsteps_y; j1++) {
       j0 = j1 * kcStep + hwKernel;
 
