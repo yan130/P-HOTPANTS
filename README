@@ -43,3 +43,7 @@ or
 
 ./hotpants -inim input_1K.fit -tmplim templ_1K.fit -outim resd_1K.fit -v 0
 
+==========
+
+Citation:
+Zhao, Yan,  Qiong Luo, Senhong Wang, Chao Wu. "Accelerating Astronomical Image Subtraction on Heterogeneous Processors." eScience (eScience), 2013 IEEE 9th International Conference on. IEEE, 2013.
