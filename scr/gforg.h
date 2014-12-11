@@ -67,7 +67,7 @@ double   * d_ksol;
 
 int      * d_sflag;
 double   *d_fx,*d_fy;
-double *fx,*fy;
+double   *fx,*fy;
 float     rPixX2, rPixY2;
 int       ncomp1,ncomp2, ncomp, nbg_vec;;
 int       mat_size,vsize;
